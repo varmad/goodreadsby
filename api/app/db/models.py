@@ -23,6 +23,38 @@ class Recommender(Base):
     slug: Mapped[str] = mapped_column(String, unique=True, nullable=False)
 
 
+class Author(Base):
+    """A catalogue author from Open Library, keyed by its Open Library id.
+
+    Denormalised onto ``Work.author`` at ingest time (SCRUM-4); the site reads the
+    name off the Work, so this table only exists to resolve a work's author keys.
+    """
+
+    __tablename__ = "authors"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+
+
+class IngestCheckpoint(Base):
+    """The last committed dump line per source file, so an ingest can resume.
+
+    Written in the same transaction as each batch (SCRUM-4): after a crash the
+    checkpoint and the rows it accounts for advance together, never apart.
+    """
+
+    __tablename__ = "ingest_checkpoints"
+
+    source: Mapped[str] = mapped_column(String, primary_key=True)
+    line_no: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
 class Source(Base):
     __tablename__ = "sources"
 

@@ -26,5 +26,5 @@ def read_work(slug: str, session: Session = Depends(get_session)) -> dict:
     result = get_work_by_slug(session, slug)
     if result is None:
         raise HTTPException(status_code=404, detail="Work not found")
-    work, recommendations = result
-    return present_work(work, recommendations)
+    work, recommendations, editions = result
+    return present_work(work, recommendations, editions)
