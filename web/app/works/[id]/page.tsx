@@ -35,6 +35,10 @@ export default async function WorkPage({
       <h1>{work.title}</h1>
       <p>by {work.author}</p>
 
+      {work.formats.length > 0 && (
+        <p>Available in: {work.formats.join(", ")}</p>
+      )}
+
       <h2>
         Recommended by {work.recommendations.length}{" "}
         {work.recommendations.length === 1 ? "person" : "people"}

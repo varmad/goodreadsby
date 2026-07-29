@@ -37,10 +37,24 @@ def _to_domain_work(row: orm.Work) -> domain.Work:
     return domain.Work(id=row.id, title=row.title, author=row.author, slug=row.slug)
 
 
+def _to_domain_edition(row: orm.Edition) -> domain.Edition:
+    return domain.Edition(
+        id=row.id,
+        work_id=row.work_id,
+        format=row.format,
+        isbn_10=row.isbn_10,
+        isbn_13=row.isbn_13,
+    )
+
+
 def get_work_by_slug(
     session: Session, slug: str
-) -> tuple[domain.Work, list[domain.Recommendation]] | None:
-    """Return the Work and all its Recommendations, or None if unknown."""
+) -> tuple[domain.Work, list[domain.Recommendation], list[domain.Edition]] | None:
+    """Return the Work, all its Recommendations and its Editions, or None.
+
+    Editions come from the Open Library ingest (SCRUM-4) and give the Work page its
+    available formats.
+    """
     stmt = (
         select(orm.Work)
         .where(orm.Work.slug == slug)
@@ -49,6 +63,7 @@ def get_work_by_slug(
                 orm.Recommendation.recommender
             ),
             joinedload(orm.Work.recommendations).joinedload(orm.Recommendation.source),
+            joinedload(orm.Work.editions),
         )
     )
     work_row = session.scalars(stmt).unique().one_or_none()
@@ -56,4 +71,5 @@ def get_work_by_slug(
         return None
     work = _to_domain_work(work_row)
     recs = [_to_domain_recommendation(r) for r in work_row.recommendations]
-    return work, recs
+    editions = [_to_domain_edition(e) for e in work_row.editions]
+    return work, recs, editions

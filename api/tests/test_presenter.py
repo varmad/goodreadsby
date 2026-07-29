@@ -2,7 +2,7 @@ import json
 import unittest
 from datetime import date, datetime, timezone
 
-from app.domain.models import Recommendation, Recommender, Source, Work
+from app.domain.models import Edition, Recommendation, Recommender, Source, Work
 from app.domain.presenter import present_recommendation, present_work
 
 
@@ -58,6 +58,21 @@ class PresentWorkTests(unittest.TestCase):
         payload = present_work(work, recs)
         said = [r["said_on"] for r in payload["recommendations"]]
         self.assertEqual(said, ["2026-06-20", "2026-06-01", "2026-05-15"])
+
+    def test_lists_available_formats_deduplicated_and_sorted(self):
+        work = Work(id="work-1", title="A Book", author="An Author", slug="a-book")
+        editions = [
+            Edition(id="e1", work_id="work-1", format="paperback"),
+            Edition(id="e2", work_id="work-1", format="hardcover"),
+            Edition(id="e3", work_id="work-1", format="paperback"),
+        ]
+        payload = present_work(work, [], editions)
+        self.assertEqual(payload["formats"], ["hardcover", "paperback"])
+
+    def test_formats_default_to_empty_without_editions(self):
+        work = Work(id="work-1", title="A Book", author="An Author", slug="a-book")
+        payload = present_work(work, [_recommendation("rmd-1", date(2026, 6, 1))])
+        self.assertEqual(payload["formats"], [])
 
     def test_work_payload_never_leaks_ingestion_data(self):
         work = Work(id="work-1", title="A Book", author="An Author", slug="a-book")

@@ -17,6 +17,8 @@ export interface Work {
   slug: string;
   title: string;
   author: string;
+  // Available forms of the Work, from the Open Library ingest (SCRUM-4).
+  formats: string[];
   recommendations: Recommendation[];
 }
 

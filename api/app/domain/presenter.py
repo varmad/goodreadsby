@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Iterable
 
-from .models import Recommendation, Work
+from .models import Edition, Recommendation, Work
 from .sources import format_timestamp, source_deep_link
 
 
@@ -29,16 +29,24 @@ def present_recommendation(rec: Recommendation) -> dict:
     }
 
 
-def present_work(work: Work, recommendations: Iterable[Recommendation]) -> dict:
-    """Public shape of a Work page: the book and all of its Recommendations.
+def present_work(
+    work: Work,
+    recommendations: Iterable[Recommendation],
+    editions: Iterable[Edition] = (),
+) -> dict:
+    """Public shape of a Work page: the book, its Recommendations and its formats.
 
     Recommendations are ordered most-recent-first by the date they were said.
+    ``formats`` is the sorted, de-duplicated set of Edition formats — the available
+    forms of the Work, drawn from the Open Library ingest (SCRUM-4).
     """
     ordered = sorted(recommendations, key=lambda r: r.said_on, reverse=True)
+    formats = sorted({e.format for e in editions})
     return {
         "id": work.id,
         "slug": work.slug,
         "title": work.title,
         "author": work.author,
+        "formats": formats,
         "recommendations": [present_recommendation(r) for r in ordered],
     }
