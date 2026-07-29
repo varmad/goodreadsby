@@ -90,11 +90,11 @@ def _resolve_author(store: Store, work: ol.ParsedWork) -> str:
     Falls back to a placeholder when none resolve — a work whose author dump has
     not been loaded yet still renders, rather than violating the not-null column.
     """
-    names = [
-        name
-        for name in (store.get_author_name(aid) for aid in work.author_ids)
-        if name
-    ]
+    names = []
+    for author_id in work.author_ids:
+        name = store.get_author_name(author_id)
+        if name:
+            names.append(name)
     return ", ".join(names) if names else UNKNOWN_AUTHOR
 
 
