@@ -1,0 +1,17 @@
+[project]
+name = "goodreadsby-api"
+version = "0.1.0"
+description = "goodreadsby API and pipeline (FastAPI + Postgres), per ADR-0004"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.1",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
