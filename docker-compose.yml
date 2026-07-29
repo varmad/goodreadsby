@@ -1,0 +1,21 @@
+# Local Postgres for the walking skeleton. Production infrastructure is decided
+# and provisioned in SCRUM-3; this file is for running the skeleton on a laptop.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: goodreadsby
+      POSTGRES_PASSWORD: goodreadsby
+      POSTGRES_DB: goodreadsby
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U goodreadsby"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  pgdata:
