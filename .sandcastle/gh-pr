@@ -1,0 +1,98 @@
+#!/bin/sh
+# gh-pr — push the current branch to GitHub and open a pull request for it.
+#
+#   gh-pr [base-branch]      base defaults to $PR_BASE_BRANCH, then "main"
+#
+# Run from inside the Sandcastle sandbox after the implement and review phases
+# have committed. Prints the pull request URL on stdout.
+#
+# Reads GH_TOKEN (or GITHUB_TOKEN) for auth, GITHUB_REPO (owner/name) to name
+# the target repo when there is no usable `origin` remote, and PR_DRAFT=1 to
+# open the PR as a draft. See .sandcastle/.env.example.
+#
+# If JIRA_URL is set and a key for JIRA_DEFAULT_PROJECT appears in the branch's
+# commit messages, that issue also gets the PR URL as a comment and moves to
+# JIRA_REVIEW_STATUS. It is never closed here — a human does that after merge.
+set -eu
+
+GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
+[ -n "$GH_TOKEN" ] || { echo "gh-pr: GH_TOKEN is not set" >&2; exit 1; }
+export GH_TOKEN
+
+base="${1:-${PR_BASE_BRANCH:-main}}"
+branch=$(git rev-parse --abbrev-ref HEAD)
+
+[ "$branch" != "HEAD" ] || { echo "gh-pr: HEAD is detached, nothing to push" >&2; exit 1; }
+[ "$branch" != "$base" ] || { echo "gh-pr: refusing to open a PR from $base onto itself" >&2; exit 1; }
+
+# Resolve owner/name. An explicit GITHUB_REPO wins; otherwise parse the origin
+# remote, which may be either an SSH or an HTTPS URL.
+repo="${GITHUB_REPO:-}"
+if [ -z "$repo" ]; then
+  origin=$(git remote get-url origin 2>/dev/null || true)
+  [ -n "$origin" ] || { echo "gh-pr: no 'origin' remote and GITHUB_REPO is not set" >&2; exit 1; }
+  repo=$(printf '%s' "$origin" | sed -e 's#^git@github\.com:##' -e 's#^ssh://git@github\.com/##' -e 's#^https://[^/]*github\.com/##' -e 's#\.git$##')
+  # Anything still carrying a host, a scheme or a second slash was not a GitHub
+  # remote, so bail rather than push somewhere unintended.
+  case "$repo" in
+    */*/* | *:* | *@* | */) repo="" ;;
+    */*) ;;
+    *) repo="" ;;
+  esac
+  [ -n "$repo" ] || { echo "gh-pr: origin ($origin) is not a GitHub owner/name remote — set GITHUB_REPO" >&2; exit 1; }
+fi
+
+# Push over HTTPS with the token supplied by a one-shot credential helper, so it
+# never lands in the remote URL, the process list, or .git/config.
+# No --force: each iteration gets its own timestamped branch, so a rejected
+# push means something unexpected already occupies the ref and should be looked
+# at rather than overwritten.
+git -c credential.helper= \
+    -c "credential.helper=!f() { echo username=x-access-token; echo password=\$GH_TOKEN; }; f" \
+    push "https://github.com/$repo.git" "HEAD:refs/heads/$branch"
+
+# An existing PR for this branch means the loop already published it — report
+# that one instead of failing.
+existing=$(gh pr view "$branch" --repo "$repo" --json url --jq .url 2>/dev/null || true)
+if [ -n "$existing" ]; then
+  echo "$existing"
+  exit 0
+fi
+
+# Prefer the remote-tracking ref — the local base branch may be behind.
+if git rev-parse --verify --quiet "origin/$base" >/dev/null; then
+  range="origin/$base..HEAD"
+elif git rev-parse --verify --quiet "$base" >/dev/null; then
+  range="$base..HEAD"
+else
+  echo "gh-pr: base branch '$base' resolves neither as origin/$base nor locally" >&2
+  exit 1
+fi
+
+title=$(git log "$range" --reverse --format=%s | head -1)
+[ -n "$title" ] || { echo "gh-pr: no commits on $branch that are not already on $base" >&2; exit 1; }
+
+body=$(git log "$range" --reverse --format='### %s%n%n%b')
+
+# Link the Jira issue when the commits name one.
+project="${JIRA_DEFAULT_PROJECT:-SCRUM}"
+key=$(git log "$range" --format=%B | grep -oE "$project-[0-9]+" | head -1 || true)
+if [ -n "$key" ] && [ -n "${JIRA_URL:-}" ]; then
+  body=$(printf '%s\n\nJira: %s/browse/%s\n' "$body" "${JIRA_URL%/}" "$key")
+fi
+
+set -- --repo "$repo" --base "$base" --head "$branch" --title "$title" --body "$body"
+if [ "${PR_DRAFT:-}" = "1" ]; then
+  set -- "$@" --draft
+fi
+
+url=$(gh pr create "$@")
+echo "$url"
+
+# Hand the issue to the reviewer: comment the PR link and move it out of the
+# work statuses. Not optional — an issue left in its work status is picked up
+# again by the next iteration's `jira-task list`, so a failure here has to be
+# loud. Closing it stays a human decision, after the PR merges.
+if [ -n "$key" ] && [ -n "${JIRA_URL:-}" ] && command -v jira-task >/dev/null 2>&1; then
+  jira-task review "$key" "Pull request opened: $url"
+fi

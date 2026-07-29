@@ -1,0 +1,27 @@
+# Keep credentials out of the AI index entirely — .sandcastle/.env holds live
+# Jira and GitHub tokens.
+.env
+.env.*
+!.env.example
+
+# Dependencies and build output — noise that crowds out real context.
+node_modules/
+.next/
+out/
+build/
+dist/
+.venv/
+venv/
+__pycache__/
+
+# Sandcastle run artifacts. Worktrees are full copies of the repo, so indexing
+# them would duplicate every source file N times.
+.sandcastle/worktrees/
+.sandcastle/logs/
+
+# Lockfiles — large, generated, never worth reading.
+package-lock.json
+pnpm-lock.yaml
+yarn.lock
+uv.lock
+poetry.lock

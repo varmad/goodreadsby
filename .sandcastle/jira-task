@@ -1,0 +1,139 @@
+#!/bin/sh
+# jira-task — minimal Jira Cloud client for the Sandcastle loop.
+#
+#   jira-task list                open tasks as a JSON array
+#   jira-task view <KEY>          one task as JSON, with comments
+#   jira-task comment <KEY> <msg> add a comment, leaving the status alone
+#   jira-task review <KEY> [msg]  comment, then transition to JIRA_REVIEW_STATUS
+#   jira-task close <KEY> [msg]   comment on a task and transition it to Done
+#
+# Reads JIRA_URL, JIRA_EMAIL, JIRA_API_TOKEN, JIRA_DEFAULT_PROJECT,
+# JIRA_WORK_STATUSES and JIRA_REVIEW_STATUS from the environment (see
+# .sandcastle/.env.example).
+set -eu
+
+for var in JIRA_URL JIRA_EMAIL JIRA_API_TOKEN; do
+  eval "value=\${$var:-}"
+  [ -n "$value" ] || { echo "jira-task: $var is not set" >&2; exit 1; }
+done
+
+project="${JIRA_DEFAULT_PROJECT:-SCRUM}"
+work_statuses="${JIRA_WORK_STATUSES:-To Do}"
+review_status="${JIRA_REVIEW_STATUS:-In Review}"
+api="${JIRA_URL%/}/rest/api/2"
+
+# Credentials go in via stdin so they never appear in the process list.
+jira_curl() {
+  printf 'user = "%s:%s"\n' "$JIRA_EMAIL" "$JIRA_API_TOKEN" |
+    curl -sS --fail-with-body --config - -H 'Accept: application/json' "$@"
+}
+
+usage() {
+  echo "usage: jira-task list | view <KEY> | comment <KEY> <message> | review <KEY> [message] | close <KEY> [message]" >&2
+  exit 2
+}
+
+# Move an issue to a target status. The transition is resolved by the status it
+# leads to rather than by a hard-coded id, since ids differ per workflow.
+transition_to() {
+  key="$1"
+  target="$2"
+
+  transition=$(jira_curl "$api/issue/$key/transitions" |
+    jq -r --arg target "$target" '[.transitions[] | select(.to.name == $target)][0].id // empty')
+
+  if [ -z "$transition" ]; then
+    echo "jira-task: no transition to \"$target\" available for $key" >&2
+    jira_curl "$api/issue/$key/transitions" | jq -r '.transitions[] | "  available: \(.name) -> \(.to.name)"' >&2
+    exit 1
+  fi
+
+  jq -n --arg id "$transition" '{transition: {id: $id}}' |
+    jira_curl -X POST -H 'Content-Type: application/json' --data @- \
+      "$api/issue/$key/transitions" >/dev/null
+}
+
+add_comment() {
+  jq -n --arg body "$2" '{body: $body}' |
+    jira_curl -X POST -H 'Content-Type: application/json' --data @- \
+      "$api/issue/$1/comment" >/dev/null
+}
+
+require_key() {
+  [ -n "${1:-}" ] || usage
+}
+
+case "${1:-}" in
+list)
+  # JIRA_WORK_STATUSES is a comma-separated list; jq quotes each one for JQL.
+  jql=$(jq -rn --arg project "$project" --arg statuses "$work_statuses" '
+    ($statuses | split(",") | map("\"" + (gsub("^\\s+|\\s+$"; "")) + "\"") | join(", ")) as $in
+    | "project = \($project) AND status IN (\($in)) ORDER BY created ASC"')
+
+  jira_curl -G "$api/search/jql" \
+    --data-urlencode "jql=$jql" \
+    --data-urlencode 'fields=summary,description,status,issuetype,labels,priority' \
+    --data-urlencode 'maxResults=100' |
+    jq --arg url "${JIRA_URL%/}" '[
+      .issues[] | {
+        id: .key,
+        title: .fields.summary,
+        body: (.fields.description // ""),
+        type: .fields.issuetype.name,
+        status: .fields.status.name,
+        labels: .fields.labels,
+        url: "\($url)/browse/\(.key)"
+      }
+    ]'
+  ;;
+
+view)
+  require_key "${2:-}"
+  key="$2"
+  issue=$(jira_curl -G "$api/issue/$key" \
+    --data-urlencode 'fields=summary,description,status,issuetype,labels,priority,assignee,issuelinks,subtasks')
+  comments=$(jira_curl -G "$api/issue/$key/comment" --data-urlencode 'maxResults=50')
+
+  printf '%s' "$issue" | jq --arg url "${JIRA_URL%/}" --argjson comments "$comments" '{
+    id: .key,
+    title: .fields.summary,
+    body: (.fields.description // ""),
+    type: .fields.issuetype.name,
+    status: .fields.status.name,
+    labels: .fields.labels,
+    assignee: (.fields.assignee.displayName // null),
+    links: [.fields.issuelinks[]? | {
+      relation: (.type.outward // .type.inward),
+      issue: ((.outwardIssue // .inwardIssue).key),
+      status: ((.outwardIssue // .inwardIssue).fields.status.name)
+    }],
+    url: "\($url)/browse/\(.key)",
+    comments: [$comments.comments[]? | {author: .author.displayName, created, body}]
+  }'
+  ;;
+
+comment)
+  require_key "${2:-}"
+  [ -n "${3:-}" ] || usage
+  add_comment "$2" "$3"
+  echo "Commented on $2."
+  ;;
+
+review)
+  require_key "${2:-}"
+  [ -n "${3:-}" ] && add_comment "$2" "$3"
+  transition_to "$2" "$review_status"
+  echo "Moved $2 to $review_status."
+  ;;
+
+close)
+  require_key "${2:-}"
+  [ -n "${3:-}" ] && add_comment "$2" "$3"
+  transition_to "$2" "Done"
+  echo "Closed $2 (Done)."
+  ;;
+
+*)
+  usage
+  ;;
+esac
